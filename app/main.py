@@ -5,6 +5,17 @@ import os
 from pypaths import astar
 
 
+DIRECTION_MAP = {
+    (0, -1): 'up',
+    (0, 1): 'down',
+    (-1, 0): 'left',
+    (1, 0): 'right'
+}
+
+ZOMBIE_NAME = 'ZOMBIE'
+ZOMBIE_TAUNT = 'BRAAAAIIINS'
+
+
 @bottle.route('/')
 def static():
     return "the server is running"
@@ -17,62 +28,32 @@ def static(path):
 
 @bottle.post('/start')
 def start():
-    data = bottle.request.json
-    game_id = data.get('game_id')
-    board_width = data.get('width')
-    board_height = data.get('height')
-
     head_url = '%s://%s/static/head.png' % (
         bottle.request.urlparts.scheme,
         bottle.request.urlparts.netloc
     )
 
-    s4_colors = {
-        'indigo': '#4E54A4',
-        'green': '#44B5AD',
-        'orange': '#F37970',
-        'purple': '#AA66AA'
-    }
-
-    # snake_name = data['you']['name']
-    # color = next((hexval for color, hexval in colors.items() if color in snake_name), colors['GREEN'])
-
-    color = random.choice(s4_colors.values())
-
-    print color
-
     return {
-        'color': color,
-        'taunt': '{} ({}x{})'.format(game_id, board_width, board_height),
+        'color': '#CCCCCC',
+        'taunt': ZOMBIE_TAUNT,
         'head_url': head_url,
         'name': 'battlesnake-python'
     }
 
 
-DIRECTION_MAP = {
-    (0, -1): 'up',
-    (0, 1): 'down',
-    (-1, 0): 'left',
-    (1, 0): 'right'
-}
-
-
 def get_valid_neighbours(coord, data):
-
-    # TODO: Other snake tails border squares should be danger zones too, if they eat food
-    # TODO: Don't go into a space smaller than your body
-    # TODO: Ignore rules if stuck
-
     snake_coords = [(point['x'], point['y']) for snake in data['snakes']['data'] for point in snake['body']['data']]
-    other_snake_heads = [(snake['body']['data'][0]['x'], snake['body']['data'][0]['y']) for snake in data['snakes']['data'] if snake['id'] != data['you']['id']]
-    other_head_neighbors = [add_coords(head, dir_coord) for dir_coord in DIRECTION_MAP.keys() for head in other_snake_heads]
+    friendly_snake_heads = [point_to_coord(friend['body']['data'][0]) for friend in data['snakes']['data'] if ZOMBIE_NAME in friend['name'].upper() and friend['id'] != data['you']['id']]
+    friendly_head_neighbors = [add_coords(head, dir_coord) for dir_coord in DIRECTION_MAP.keys() for head in friendly_snake_heads]
     all_neighbors = [add_coords(coord, dir_coord) for dir_coord in DIRECTION_MAP.keys()]
 
-    valid_neighbours = [coord for coord in all_neighbors
-                        if 0 <= coord[0] < data['width']
-                        and 0 <= coord[1] < data['height']
-                        and coord not in snake_coords
-                        and coord not in other_head_neighbors]
+    valid_neighbours = [
+        coord for coord in all_neighbors
+        if 0 <= coord[0] < data['width']
+           and 0 <= coord[1] < data['height']
+           and coord not in snake_coords
+           and coord not in friendly_head_neighbors  # TODO: Could remove this, if they're too hard
+    ]
 
     return valid_neighbours
 
@@ -110,18 +91,14 @@ def move():
 
     head_coords = you_coords[0]
 
-    paths = []
+    # Zombies only eat brains!
+    enemy_snake_heads = [point_to_coord(snake['body']['data'][0]) for snake in data['snakes']['data'] if ZOMBIE_NAME not in snake['name'].upper()]
+    enemy_head_neighbors = [add_coords(head, dir_coord) for dir_coord in DIRECTION_MAP.keys() for head in enemy_snake_heads]
+    paths = get_paths_to_coords(finder, head_coords, enemy_head_neighbors)
 
-    # TODO: Maybe we want to eat as much as possible until we reach a certain length?
-    # TODO: Maybe eat food that is opportunistically close?
+    # TODO: Could add looping of no path to enemy head
 
-    # Snake is hungry! Or we're unpacking at the beginning of the game.
-    if data['you']['health'] < 30 or data['turn'] < data['you']['length']:
-        paths = get_paths_to_points(finder, head_coords, data['food']['data'])
-
-    if not paths:
-        tail_neighbour_coords = [add_coords(you_coords[-1], coord) for coord in DIRECTION_MAP.keys()]
-        paths = get_paths_to_coords(finder, head_coords, tail_neighbour_coords)
+    print 'Targets: %s' % enemy_head_neighbors
 
     if not paths:
         raise Exception
@@ -130,6 +107,8 @@ def move():
 
     next_coords = path[1][1]
 
+    print 'Next move: %s' % str(next_coords)
+
     coord_delta = sub_coords(next_coords, head_coords)
 
     direction = DIRECTION_MAP[coord_delta]
@@ -137,7 +116,7 @@ def move():
     print direction
     return {
         'move': direction,
-        'taunt': 'DROP TABLE snakes;'
+        'taunt': ZOMBIE_TAUNT
     }
 
 
